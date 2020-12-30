@@ -1,0 +1,473 @@
+---
+title: "Los Angeles County Covid-19 Analysis"
+author: "Marc Los Huertos"
+date:  "`r format(Sys.time(), '%d %B, %Y')`"
+output: bookdown::html_document2
+# output: github_document
+---
+   
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, options(scipen=999))
+library(xtable)
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+require(deSolve)
+require(bbmle)
+```
+
+# Introduction
+
+As I have watched the Covid-19 pandemic, I decided that I was going to process the data on my own and see of I could confirm trends articulated by state and federal agencies. From what I can tell, each region has it's own timeline and trajectory based municipal responses and state mandates. Thus, I took some time to drill into the LA context. 
+
+## Disclaimer
+
+This is not peer reviewed work and well outside my typical professional work -- but these mussings are mostly to help me understand what's going on, but if others find this useful, please analyze the data for yourself to confirm my results. If you found something amiss with my analyses, please let me know and I'll fix it ASAP. 
+
+# Data Source
+
+I have been using the [data hosted on github](https://github.com/CSSEGISandData/COVID-19), entitled Novel Corona-virus (COVID-19) Cases and provided by Johns Hopkins University, Center for Systems Science and Engineering.
+
+# Work flow -- Data Wrangling
+
+First, I create a list of daily reports and combined them into a single csv. Unfortunately, the folks curating the data have been terribly inconsistent in the with their data records as columns are added and inconsistently named. Unfortunately, reading the data into R took 5 hours because there were at least three different file structures, but should have taken 5 minutes. 
+
+```{r, echo=FALSE, results='hide', message=FALSE}
+# download and read csvs
+#I am using project connect to the gibhub site and pull into my own project. I can't push, but that's fine. 
+
+# create list of csv
+
+path = "~/github/COVID-19/csse_covid_19_data/csse_covid_19_daily_reports/" 
+#path = "https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_daily_reports/"
+filepath <- list.files(path = path, pattern = "*.csv", full.names = T);
+files <- list.files(path = path, pattern = "*.csv", full.names = F);
+files = substring(files, 1, 10)
+files = data.frame(files, filepath)
+Daily = data.frame(NA)
+for(i in 1:c(nrow(files)-0)){
+   tmp = paste(files[i,2])
+   tmp2 <- read.csv(tmp)
+   tmp2$Date = paste(files[i,1])
+   tmp2[] <- lapply(tmp2, as.character)
+Daily = dplyr::bind_rows(Daily, tmp2)
+}
+Daily <- Daily[-1,]
+rm(files, tmp, tmp2, filepath, i, path)
+```
+
+Secondly, I needed to replace missing data with zeros and reformat the strings to numbers. I also changed the variable for the date into something R could actually do something with, i.e. from a character string to a date format. 
+
+```{r fixedvariabletypes}
+Daily$Confirmed=as.numeric(Daily$Confirmed)
+Daily$Deaths[is.na(Daily$Deaths)]=0; Daily$Deaths <- as.numeric(Daily$Deaths)
+Daily$lnConfirmed = log(Daily$Confirmed)
+Daily$Recovered = as.numeric(Daily$Recovered)
+Daily$Date= as.Date(as.character(Daily$Date), format='%m-%d-%Y')
+
+str(Daily$Date)
+```
+
+
+found important gaps as the outbreak began, where the github site did not have county level data in March -- a critical time in the dataset. By using county health reports, I was able to fill missing data in LA County, but I didn't do it for any other counties. We'll come back to ths issue. 
+
+## Subset of County-levle Data for California  
+
+Early in the record, counties are not recorded, and there is a fair amount of missing data. 
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+
+CA = subset(Daily, subset=(Province_State=="California"))
+
+CA$County <- CA$Admin2
+CA = subset(CA, select=c(County, Confirmed, Deaths, Recovered, Date))
+
+```
+
+## Merge with County Demographics
+```{r}
+densities = read.csv("/home/CAMPUS/mwl04747/github/test/Epidemiology/County.Densities.csv", header=FALSE)
+names(densities)=c("County", "Density")
+CA = merge(CA, densities)
+CA$Death.d = as.numeric(CA$Deaths) / CA$Density
+populations = read.csv("/home/CAMPUS/mwl04747/github/test/Epidemiology/CA_County_Population.csv")
+CA = merge(CA, populations)
+CA$Death.r <- CA$Deaths/CA$Population*10000
+CA$Confirmed.r <- CA$Confirmed/CA$Population*10000
+
+rm(populations, densities, county)
+
+
+```
+
+## County Data 
+```{r, eval=FALSE}
+LA = subset(CA, subset=(County == "Los Angeles"))
+str(LA)
+Orange = subset(CA, subset=(County == Orange" & Province_State == "California" | Province.State == "Orange, CA"))
+
+SB = subset(CA, subset=(Admin2 == "San Bernardino" & Province_State == "California" | Province.State == "San Bernardino, CA"))
+Riverside = subset(Daily, subset=(Admin2 == "Riverside" & Province_State == "California" | Province.State == "Riverside, CA"))
+SD = subset(Daily, subset=(Admin2 == "San Diego" & Province_State == "California" | Province.State == "San Diego, CA"))
+```
+
+```{r, echo=FALSE, eval=FALSE, fig.cap='Confirmed Cases in Southern California County (Source JHU-CSSE)'}
+
+plot(Confirmed~Date, data=LA, las=1, pch=20)
+points(Orange$Date, Orange$Confirmed, col="orange", cex=.7)
+points(Riverside$Date, Riverside$Confirmed, col="blue", cex=.7)
+points(SB$Date, SB$Confirmed, col="brown", cex=.7)
+points(SD$Date, SD$Confirmed, col="purple", cex=.7)
+
+legend(as.Date("2020-02-15"), max(LA$Confirmed), legend=c("LA County", "Riverside", "Orange", "San Bernardino", "San Diego"), pch=20, 
+  col=c("black", "blue", "orange", "brown", "purple"))
+```
+
+## Early Days
+
+I find it ironic that the data are missing early in the outbreak -- First, the public health infrastructure was completely unprepared to make timely tracking. Which speaks to an even more found problem --- Had the federal government really planned effectively, these early cases could have been tracked much more effectively. For two weeks the values seem to be missing. 
+
+```{r, earlydayfig, fig.cap ="Early Records of Confirmed Cases of Covid-19 in LA County"}
+plot(Confirmed~Date, data=CA[CA$County=="Los Angeles" & CA$Date<="2020-03-23",], las=1, ylim=c(0,550), ty='p')
+text(as.Date("2020-03-16"), 50, "Missing Data")
+```
+
+### Filling in the Missing Data w/ LA County Public Health Reports 
+
+I found press releases by the County to have some of the missing data:
+
+- 3/09/2020  = 16 cases (github reported 14)
+- 3/10/2020  = 17 cases, but missing LB and Pasadena
+- 3/11/2020  = 27 cases
+- 3/12/2020  = 32 cases
+- 3/13/2020  = 40 cases
+- 3/14/2020  = 53 cases
+- 3/15/2020  = 69 cases
+- 3/16/2020  = 94 cases
+- 3/17/2020  = 144 cases
+- 3/18/2020  = 190 cases
+- 3/19/2020  = 231 cases
+- 3/20/2020  = 292 cases
+- 3/21/2020  = 351 cases
+- 3/22/2020  = 409 cases (corrected as 407 on the 23rd, same as github)
+- 3/23/2020  = 536 cases (90 hospitalized) same as github
+
+```{r countydata, echo=FALSE}
+county = data.frame(Date = as.Date(c("2020-03-10", "2020-03-11", "2020-03-12", "2020-03-13", "2020-03-14", "2020-03-15", "2020-03-16", "2020-03-17", "2020-03-18", "2020-03-19", "2020-03-20", "2020-03-21")), Confirmed = c( 17, 27, 32, 40, 53, 69, 94, 144, 190, 231, 292, 351))
+county$lnConfirmed = log(county$Confirmed)
+
+LA = bind_rows(LA, county)
+```
+
+   
+Missing or incorrect data on Github site from the weekend of the March 28/29, April 4, April 11/12 based on the County Health Department Webpage (noon on each day).
+```{r}
+LA$Confirmed[LA$Date=="2020-03-28"] = 1829
+LA$Confirmed[LA$Date=="2020-03-29"] = 2136
+LA$Confirmed[LA$Date=="2020-04-04"] = 5277
+LA$Confirmed[LA$Date=="2020-04-11"] = 8873
+LA$Confirmed[LA$Date=="2020-04-12"] = 9162
+LA = LA[order(LA$Date),]
+```
+
+```{r, EarlyDays, fig.cap ="Early Records of Confirmed Cases of Covid-19 in LA County"}
+plot(Confirmed~Date, data=LA[LA$Date<="2020-03-23",], las=1, ylim=c(0,550), ty='p')
+
+```
+# Per Capita Cases Comparisons
+
+## County Population Sizes 
+
+Counties vary in size, so the number of cases in a county isn't a good measure of prevalence and spread. Epidiologists generally measure cases relative to constant populaitions size -- e.g. per 1,000, 10,000, 100,000, etc -- depending on prevalence. For our case, we'll use the standard for covid, which is per 10,000.
+
+In addition, with confirmed per 10,000 we can compare counties. 
+
+```{r percapita}
+
+```
+
+## Selected Counties to Compare
+
+There are 58 counties in CA, too many to view at once. So, I selected a few SoCal, BayArea, and rural counities to compare.
+
+```{r}
+Selected = subset(CA_pop, subset=(County=="Los Angeles" | County=="Orange" | County=="San Bernardino" | County=="San Diego" | County=="Santa Cruz" | County=="San Francisco" | County=="Santa Clara" | County=="Del Norte" | County=="Monterey" | County=="Mono" | County=="San Luis Obispo"))
+```
+
+## Confirmed Cases and Deaths by County
+```{r}
+
+C <- ggplot(Selected, aes(x = Date, y = Confirmed.r, color = County)) + geom_line() + geom_point(aes(shape=County), size=2) + scale_shape_manual(values=c(3, 16, 17, 20, 3, 16, 17, 20, 3, 16, 17)) + labs(y = "Confirmed/10,000")
+
+D.r <- ggplot(Selected, aes(x = Date, y = Death.r, color = County)) + geom_line() + geom_point(aes(shape=County), size=2) + scale_shape_manual(values=c(3, 16, 17, 20, 3, 16, 17, 20, 3, 16, 17)) + labs(y = "Deaths/10,000")
+
+library(ggpubr)
+
+figure <- ggarrange(C, D.r,
+    labels = c("A", "B"),
+    ncol = 2, nrow = 1,
+    common.legend = TRUE, legend = "bottom")
+figure
+```
+The prevalence for confirmed cases and mortality are the highest in Los Angeles County. However, cases in San Bernardino has climbed rapidly in June, although mortality has been relatively stable. 
+
+Some counties have had very low mortality, which suggest that fewer people with pre-existing conditions have been infected or the number of deaths has not been accurately recorded. 
+
+## Density does not explain county differences
+
+```{r echo=FALSE}
+CA_dates = subset(CA_pop, subset=(Date==max(Daily$Date, na.rm=T) | Date=="2020-04-01" | Date=="2020-05-01" | Date=="2020-06-01" | Date=="2020-07-01"), select=c(Date, County, Density, Deaths, Death.r, Population, Confirmed))
+CA_dates$pop = CA_dates$Population/1000000
+CA_dates$con = CA_=CA_dates$Confirmed/1000
+CA_dates$'% Confirmed per capita' = CA_dates$Confirmed/CA_dates$Population*100
+CA_maxdate = subset(CA_dates, subset=(Date==max(CA_dates$Date, na.rm=T)))
+```
+
+```{r echo=FALSE}
+par(mfrow=c(1, 2), las=1)
+plot(con ~ pop, CA_maxdate, cex=.5, xlab="Population (Millions)",
+ylab="Confirmed (x 1,000)")
+points(con ~ pop, CA_maxdate[CA_maxdate$County == "San Francisco",], col="green", pch=20)
+points(con ~ pop, CA_maxdate[CA_maxdate$County == "Los Angeles",], col="purple", pch=20)
+points(con ~ pop, CA_maxdate[CA_maxdate$County == "Orange",], col="orange", pch=20)
+points(con ~ pop, CA_maxdate[CA_maxdate$County == "San Luis Obispo",], col="blue", pch=20)
+points(con ~ pop, CA_maxdate[CA_maxdate$County == "Yolo",], col="darkred", pch=20)
+points(con ~ pop, CA_maxdate[CA_maxdate$County == "Tulare",], col="red", pch=20)
+
+legend(1, max(CA_maxdate$con), legend=c("San Francisco", "Los Angeles", "Orange", "San Luis Obispo", "Yolo", "Tulare"), pch=20, col=c("green", "purple", "orange", "blue", "darkred", "red"), cex=.7)
+
+plot(Death.r ~ Density, CA_maxdate, cex=.5, ylab="Death Rate (by 10,000)")
+points(Death.r ~ Density, CA_maxdate[CA_maxdate$County == "San Francisco",], col="green", pch=20)
+points(Death.r ~ Density, CA_maxdate[CA_maxdate$County == "Los Angeles",], col="purple", pch=20)
+points(Death.r ~ Density, CA_maxdate[CA_maxdate$County == "Orange",], col="orange", pch=20)
+points(Death.r ~ Density, CA_maxdate[CA_maxdate$County == "San Luis Obispo",], col="blue", pch=20)
+points(Death.r ~ Density, CA_maxdate[CA_maxdate$County == "Yolo",], col="darkred", pch=20)
+points(Death.r ~ Density, CA_maxdate[CA_maxdate$County == "Tulare",], col="red", pch=20)
+```
+
+As noted above, Los Angeles has been hit the hardest -- with numbers well above the other counties. Nevertless, there is a pretty good relationship between the number of confirmed and the size of the county. 
+
+However, when evaluate the per capita rates with density, we found some odd results. Namely, San Francisco is an outlier -- high density but low mortality. Meanwhile, some rural counties, e.g. Tulare and one unidentified county, that have very high morality rates in spite of low county density. 
+
+This has been explained with data in New York, where the density of the city isn't a good predictor of infection and mortality rates, but the relative density of individuals in the city, which is correlated with income. More income, the more socially distance you can afford.
+
+## Changing Rates by County
+
+However, these pattern of infection and mortality rates is dynamic. In other words, the rates have changed with time. 
+
+```{r echo=FALSE, results='hide'}
+CA_april = subset(CA_dates, subset=Date=="2020-04-01")[,c(2,7,10)]
+names(CA_april) = c("County", "April", "% per capita--April")
+
+CA_may = subset(CA_dates, subset=Date=="2020-05-01")[,c(2,7,10)]
+names(CA_may) = c("County", "May", "% per capita--May")
+
+CA_june = subset(CA_dates, subset=Date=="2020-06-01")[,c(2,7,10)]
+names(CA_june) = c("County", "June", "% per capita--June")
+
+CA_july = subset(CA_dates, subset=Date=="2020-07-01")[,c(2,7,10)]
+names(CA_july) = c("County", "July", "% per capita--July")
+
+#CA_monthly = merge(CA_july, CA_june, by="County")
+CA_monthly = merge(CA_may, CA_april, by="County")
+CA_monthly = merge(CA_june, CA_monthly, by="County")
+CA_monthly = merge(CA_maxdate, CA_monthly, by="County")
+
+confirmed.tab = CA_monthly[order(CA_monthly$'% Confirmed per capita', decreasing=TRUE),]; confirmed.tab  = confirmed.tab[1:8, c(1,7,11,13,15, 10, 12,14, 16)]
+
+CA_april = subset(CA_dates, subset=Date=="2020-04-01")[,c(2, 4, 5)]
+names(CA_april) = c("County", "April", "Death Rate--April")
+CA_may = subset(CA_dates, subset=Date=="2020-05-01")[,c(2,4,5)]
+names(CA_may) = c("County", "May", "Death Rate--May")
+
+CA_june = subset(CA_dates, subset=Date=="2020-06-01")[,c(2,4,5)]
+names(CA_june) = c("County", "June", "Death Rate--June")
+
+CA_monthly = merge(CA_may, CA_april, by="County")
+CA_monthly = merge(CA_june, CA_monthly, by="County")
+CA_monthly = merge(CA_maxdate, CA_monthly, by="County")
+
+deaths.tab = CA_monthly[order(CA_monthly$Death.r, decreasing=TRUE),]; deaths.tab  = deaths.tab[1:8, c(1, 4, 11, 13, 16, 5, 12, 14, 16)]
+#confirmed.tab 
+```
+
+
+Confirmed Cases by rank ordered
+```{r, echo=FALSE, results="asis"}
+print(xtable(confirmed.tab), type='html', include.rownames=FALSE)
+```
+
+This table demonstrates how much Covid-19 is impacting both urban (San Francisco, LA) and rural counties (Tulare, Kings). I wonder how income plays a role?
+
+San Francisco, has a very high density -- but it's mortality rates are suprisingly low. On the other hand, LA has a mortality rate very high -- even relative to it's density. 
+
+But the death rates include some surprises -- Tulare County (`r round(CA_maxdate$Death.r[CA_maxdate$County=="Tulare"], 2)`) and Yolo County (`r round(CA_maxdate$Death.r[CA_maxdate$County=="Yolo"], 2)`). These are surpringly high!
+
+```{r, echo=FALSE, results="asis"}
+print(xtable(deaths.tab), type='html', include.rownames=FALSE)
+```
+
+# Growth Rate of Confirmed Cases
+
+## Determine Doubling Rate
+
+Doubling rate is an estimate of how many days (in this case) we have seen the confirmed cases double. 
+
+The analysis is based on the slope of the natural log of the confirmed cases and the slope. Of course, the model is wildly inaccurate if you selected the first start date to model. Obviously, this is tricky, since we know the data are crap in the early (?) part of the pandemic. 
+
+Even after skipping the first 32 observations where there were no cases, the model demonstrates the much doubling rate has changed through the pandemic. 
+
+```{r, echo=FALSE, results='hide'}
+LA.lm = lm(lnConfirmed~Date, data=LA[-c(1:32),])
+
+LA.lm.sum = summary(LA.lm)
+dr = as.vector(round(log(2)/LA.lm$coef[2],1)); dr
+
+# Confidence Intervals
+conf_int <- predict(LA.lm,LA, interval="confidence")
+LA = cbind(LA, conf_int)
+```
+
+```{r, echo=FALSE, fig.cap ='Confirm Cases in Los Angeles County and Estimated Doubling Rates'}
+
+plot(lnConfirmed ~ Date, data=LA, las=1, ylab="ln(Confirmed)", pch=20, cex=.4)
+#abline(coef(LA.lm), col='darkred', lwd=1.4)
+#text(as.Date("2020-03-05"), 5.1, paste("Doubling Rate =", dr), col='darkred')
+```
+Because the rate is so dynamic, I have not figured out how to estimate it very well, but have noticed that I can manually break it up into chunks with some success.
+
+
+
+
+
+
+## Daily Cases, Deaths
+
+```{r dailycases, eval=FALSE}
+CA$New = NA; CA$Week = NA
+
+# Subset counties - remove Modoc and Lassen
+CA = subset(CA, subset=(Admin2!="Modoc" | Admin2!="Lassen"))
+CA = CA[order(CA$Date),]
+counties <- unique(CA$Admin2)[-59]
+
+# Weekly Changes
+for(i in 1:length(counties)){
+  tmp = subset(CA, subset=(Admin2==counties[i]))$Confirmed
+  new = sapply(1:length(tmp), function(x) tmp[x+1]) - tmp
+  new = c(NA, new[-length(new)])
+  week = round((1:length(new)+3.5)/7, 0)
+  CA$New[CA$Admin2==counties[i]] = new
+  CA$Week[CA$Admin2==counties[i]] = week
+}
+
+Slopes = data.frame(County=NA, Week=NA, Slope=NA)
+#Daily$New <- sapply(1:nrow(Daily), function(x) Daily$Confirmed[x+1])
+i = 5; j=10
+for(i in 1:max(CA$Week, na.rm=T)){
+  for(j in 1:length(counties)){
+m1 = lm(New ~ Date, CA[CA$Week==i & CA$Admin2==counties[j],])
+
+Slopes = rbind(Slopes, 
+               data.frame(County=counties[j], Week=i, Slope= as.numeric(round(coef(m1)[2],2))))
+                             
+  }}
+
+
+CA %>% 
+  group_by(Admin2) %>% 
+  do(lm(lnConfirmed~Date, data=.) %>% coef %>% as_tibble)
+
+```
+
+## Comparing Doubling Rate Changes by SoCal Counties
+
+The doubling rate, i.e. the number of days before the number of confirmed cases, is a good measure of the near term changes we can expect for Covid-19. How quickly the doubling rate might decrease as a function of municipal and state recommendations and orders is quite difficult to estimate. It depends on 'shelter-in-place' compliance, the number of people getting the virus and the testing rate. I suspect it will be uneven, temporally and spatially.  
+
+```{r, echo=FALSE, results='hide'}
+
+# LA Dates
+LA1.dates = seq(as.Date("2020-03-03"), as.Date("2020-03-28"), 1)
+LA2.dates = seq(as.Date("2020-03-27"), as.Date("2020-04-10"), 1); #LA2.dates
+LA3.dates = seq(as.Date("2020-04-09"), max(LA$Date)+1, 1); LA3.dates
+
+LA1 = subset(LA, subset=(Date >= min(LA1.dates) - 1 & Date <= max(LA1.dates)-1)); nrow(LA1); # LA1$Date
+LA2 = subset(LA, subset=(Date >= min(LA2.dates) - 1 & Date <= max(LA2.dates)-1)); # LA2$Date
+LA3 = subset(LA, subset=Date >= min(LA3.dates)+1); LA3$Date
+
+# Adding Orange County
+Orange1.dates = seq(as.Date("2020-03-21"), as.Date("2020-03-30"), 1)
+Orange2.dates = seq(as.Date("2020-03-29"), as.Date("2020-04-10"), 1) 
+Orange3.dates = seq(as.Date("2020-04-09"), max(Orange$Date)+1, 1)
+
+Orange1 = subset(Orange, subset=(Date>=min(Orange1.dates) - 1 &  Date<=max(Orange1.dates)-1)); nrow(Orange1); #Orange1$Date
+Orange2 = subset(Orange, subset=(Date>=min(Orange2.dates) - 1 &  Date<=max(Orange2.dates)-1)); nrow(Orange2); #Orange2$Date
+Orange3 = subset(Orange, subset=Date>=min(Orange3.dates)+1); Orange3$Date
+
+LA1.lm = lm(lnConfirmed~Date, data=LA1)
+LA2.lm = lm(lnConfirmed~Date, data=LA2)
+LA3.lm = lm(lnConfirmed~Date, data=LA3)
+LA3.dr = as.vector(round(log(2)/LA3.lm$coef[2],1)); LA3.dr
+
+Orange1.lm = lm(lnConfirmed~Date, data=Orange1)
+Orange2.lm = lm(lnConfirmed~Date, data=Orange2)
+Orange3.lm = lm(lnConfirmed~Date, data=Orange3)
+Orange3.dr = as.vector(round(log(2)/Orange3.lm$coef[2],1)); Orange3.dr
+
+LA1.pred <- data.frame(Date = as.Date(LA1.dates), predict(LA1.lm, tibble(Date = ymd(LA1.dates)), interval="predict"))
+LA2.pred <- data.frame(Date = as.Date(LA2.dates), predict(LA2.lm, tibble(Date = ymd(LA2.dates)), interval="predict"))
+LA3.pred <- data.frame(Date = as.Date(LA3.dates), predict(LA3.lm, tibble(Date = ymd(LA3.dates)), interval="predict"))
+
+Orange1.pred <- data.frame(Date = as.Date(Orange1.dates), predict(Orange1.lm, tibble(Date = ymd(Orange1.dates)), interval="predict")); #str(Orange1.pred)
+Orange2.pred <- data.frame(Date = as.Date(Orange2.dates), predict(Orange2.lm, tibble(Date = ymd(Orange2.dates)), interval="predict")); #str(Orange2.pred)
+Orange3.pred <- data.frame(Date = as.Date(Orange3.dates), predict(Orange3.lm, tibble(Date = ymd(Orange3.dates)), interval="predict")); str(Orange3.pred)
+```
+
+
+```{r countydoubleratecompare, echo=FALSE}
+plot(lnConfirmed ~ Date, data=LA, las=1, ylab="ln(Confirmed)",
+     xlim=c(as.Date("2020-03-03"), max(LA$Date)))
+points(Orange$Date, Orange$lnConfirmed, col='darkorange')
+
+lines(LA1.pred$Date, LA1.pred$fit, col='lightblue', lwd=1.4)
+lines(LA2.pred$Date, LA2.pred$fit, col='blue', lwd=1.4)
+lines(LA3.pred$Date, LA3.pred$fit, col='darkblue', lwd=1.4)
+
+lines(Orange1.pred$Date, Orange1.pred$fit, col='orange', lwd=1.4)
+lines(Orange2.pred$Date, Orange2.pred$fit, col='darkorange', lwd=1.4)
+lines(Orange3.pred$Date, Orange3.pred$fit, col='darkorange4', lwd=1.4)
+
+text(as.Date("2020-04-01"), 9.7,paste("Current LA Doubling Rate =", LA3.dr), col='darkblue')
+text(as.Date("2020-04-14"), 5.4, paste("Current Orange Doubling Rate =", Orange3.dr), col='darkorange4')
+
+```
+
+# New Cases -- The Critical Measure of Leveling the Curve
+
+new cases 
+
+```{r}
+library(dplyr)
+CA <- 
+    CA %>%
+    group_by(County) %>%
+    mutate(Confirmed.lag = dplyr::lag(Confirmed, n = 1, default = NA))
+
+CA$New <- CA$Confirmed - CA$Confirmed.lag
+CA$New.r <- CA$New/CA$
+
+CA2 <- subset(CA, subset=(
+  County=="Los Angeles" |
+  County=="Orange" |
+  County=="San Luis Obispo" |
+  County=="San Diego"))
+
+ggplot(CA2, aes(x = Date, y=New)) + geom_col(aes(fill = County)) +
+#position_dodge() + #geom_point(aes(shape=County), size=2) + #scale_shape_manual(values=c(3, 16, 17, 20, 3, 16, 17, 20, 3, 16, 17)) + 
+labs(y = "New Cases")
+
+
+
+```

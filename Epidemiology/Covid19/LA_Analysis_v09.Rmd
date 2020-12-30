@@ -6,7 +6,6 @@ output: bookdown::html_document2
 # output: github_document
 ---
    
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, options(scipen=999))
 library(tidyverse)
@@ -103,6 +102,47 @@ points(SD$Date, SD$Confirmed, col="purple", cex=.7)
 legend(as.Date("2020-02-15"), 25000, legend=c("LA County", "Riverside", "Orange", "San Bernardino", "San Diego"), pch=20, 
   col=c("black", "blue", "orange", "brown", "purple"))
 ```
+
+## Daily Cases, Deaths
+
+```{r dailycases, eval=FALSE}
+CA$New = NA; CA$Week = NA
+
+# Subset counties - remove Modoc and Lassen
+CA = subset(CA, subset=(Admin2!="Modoc" | Admin2!="Lassen"))
+CA = CA[order(CA$Date),]
+counties <- unique(CA$Admin2)[-59]
+
+# Weekly Changes
+for(i in 1:length(counties)){
+  tmp = subset(CA, subset=(Admin2==counties[i]))$Confirmed
+  new = sapply(1:length(tmp), function(x) tmp[x+1]) - tmp
+  new = c(NA, new[-length(new)])
+  week = round((1:length(new)+3.5)/7, 0)
+  CA$New[CA$Admin2==counties[i]] = new
+  CA$Week[CA$Admin2==counties[i]] = week
+}
+
+Slopes = data.frame(County=NA, Week=NA, Slope=NA)
+#Daily$New <- sapply(1:nrow(Daily), function(x) Daily$Confirmed[x+1])
+i = 5; j=10
+for(i in 1:max(CA$Week, na.rm=T)){
+  for(j in 1:length(counties)){
+m1 = lm(New ~ Date, CA[CA$Week==i & CA$Admin2==counties[j],])
+
+Slopes = rbind(Slopes, 
+               data.frame(County=counties[j], Week=i, Slope= as.numeric(round(coef(m1)[2],2))))
+                             
+  }}
+
+library(dplyr)
+library(tidyr)
+CA %>% 
+  group_by(Admin2) %>% 
+  do(lm(lnConfirmed~Date, data=.) %>% coef %>% as_tibble)
+
+```
+
 
 ## Using LA County Public Health Data 
 
@@ -399,7 +439,7 @@ According to the LA Times, there are roughly 200 ICU beds in the county. I think
 options(scipen=5)
 
 plot(Confirmed ~ Date, data=LA, las=1, yaxt='none', ylab="Confirmed Cases", pch=20, log="y",
-xlim=c(as.Date('2020-03-01'), as.Date('2020-05-29')), ylim=c(0.1, 300000))
+xlim=c(as.Date('2020-03-01'), as.Date('2020-07-29')), ylim=c(0.1, 300000))
 
 axis(2, at=c(1, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000, 300000), labels = c("1", "10", "30", "100", "300", "1,000", "3,000", "10,000", "30,000", "100,000", "300,000"), las=2)
 #axis(2, seq(0,1.5,.5),las=1, cex.axis=1)
@@ -543,7 +583,7 @@ covid.fit.SD <- mle2(sirLL,
 
 ```
 
-```{r, echo=FALSE, results='hide'}
+```{r, echo=FALSE, results='hide', eval=FALSE}
 # number of days to predict t.p 
 t_p = 160
 
@@ -675,7 +715,7 @@ arrows(x0 = max(t)+30, y0=max(C),
        col = 'orange', lwd = 1)
 ```
 
-The estimated peak for covid-19 in LA will be `r LApeak` and `r Orangepeak` for Los Angeles and Orange County, respectively, as modeled on `r Sys.Date()`, using data through the `r max(as.Date(Daily$Date), na.rm=TRUE)`. 
+The estimated peak for covid-19 in LA will be r LApeak and r Orangepeak for Los Angeles and Orange County, respectively, as modeled on `r Sys.Date()`, using data through the `r max(as.Date(Daily$Date), na.rm=TRUE)`. 
 
 ### Model Sensitivity to Data Timestep
 
@@ -683,7 +723,8 @@ The simple model appeared reliable until we start reaching until middle April. T
 
 The accuracy and error estimates are preform poorly, the model needs to be refined in a dramatic way. Currently, the model might need to be estimated as a logistic of the estimates!
 
-```{r, echo=FALSE, results='hide'}
+```{r, echo=FALSE, results='hide', eval=FALSE}
+
 LA.estimates.dates = seq(as.Date("2020-04-04"), max(LA$Date), 1); LA.estimates.dates
 
 LA.estimates = c(
@@ -902,7 +943,7 @@ Let's say we might want to say that after 5000 cases, we should have known that 
 
 What I did is take Jones' code and then subset the data after the first indiciation that there cases in LA -- starting from when the cases went from 1 to 7 as Day 1. Then I looked at model predictions for day 7, 10, 11, 12, 14. 
 
-```{r, echo=FALSE, results='hide'}
+```{r, echo=FALSE, results='hide', eval=FALSE}
 dayzero = 32 # 1 confirmed before jumps to 7
 # Day 0
 C = LA$Confirmed[1:sum(dayzero,0)]
@@ -1050,7 +1091,7 @@ Based on this simple models, the 'safe-at-home' order could have come by day 5 o
 Not sure how to do this, working on it...
 
 
-```{r}
+```{r, eval=FALSE}
 C = LA$Confirmed[dayzero:sum(dayzero,5)]
 t = 1:length(C); days=max(t); days
 covid.fit <- mle2(sirLL, 

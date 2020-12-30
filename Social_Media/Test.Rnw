@@ -1,0 +1,83 @@
+\documentclass{article}
+\begin{document}
+
+\section{Load Packages}
+
+\subsection{Authentication}
+
+This sets up an option for you to authenticate in your local browser rather than through the RStudio Server, which does not permit certain communication protocols; if you run this locally, you do not need to include this line
+
+<<>>=
+%4/1AY0e-g71g0t4Yu4Cv-A1q4TR2ZK-GImlGEqS-KW8rLlS-7F9keg2DNfUs_c
+#library(googlesheets4)
+#options(gargle_oob_default = TRUE) 
+@
+
+\subsection{Package Used In Guide}
+
+<<>>= 
+library(vader)
+library(tidyr) 
+library(dplyr) 
+library(stringr)
+library(Hmisc)
+@
+
+\subsection{Example}
+
+<<>>=
+envDF <- googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1K-tgni6JJ33x1mG-rxNFopnC8sBuRzVLd5loBO0e1jk/edit?usp=sharing")
+
+#enviro_soc_media_DF <- googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1hQy8kR81GHmMDPivpyd8XzAGU7A6oUCUArq1bltm5EQ/edit?usp=sharing")
+
+
+envDF_tidy <- envDF %>% # using the pipe operator to pass the previous command/object forward to the next command; the outputs of this data cleaning will be stored in a data.frame entitled envDF_tidy (environmental data.frame that is tidy)
+  mutate(Text=str_replace_all(Text,"http.*\\s*|&amp;|&lt;|&gt;|RT|@|#|\\n|\\*", "")) %>% # creating a cleaned data column with the str_replace_all find and replace operator
+  mutate(Text=str_replace_all(Text,"&","and")) %>% # replacing ampersands (&) with and
+  mutate(Text=gsub("\"", "",Text)) %>% # getting weird of awkward "\" quotation mark
+  mutate(Text=trimws(Text)) # removing any excess spaces trailing or leading the string
+
+
+
+## Creating a data.frame to store sentiment scores from the vader package
+sentiment_scores_DF <- vader_df(envDF_tidy$Text, rm_qm=TRUE) # vader_df is a function that calculates sentiment scores for a column of data in a data.frame
+head(sentiment_scores_DF[,3:6])
+
+library(tidytext)
+post_words <- tokenize_tweets(envDF$Text,strip_url=TRUE) # this creates a list where each entry has the message broken into individual words, using spaces as the breaks between individual words; don't worry about it being called "tokenize_tweets" -- this function is fine to use on other social media (text) posts
+    # you can see any individual entry by using the [[]] index operator for lists; e.g. post_words[[4]]
+post_length <- unlist( lapply(post_words, length) ) # this gives you the length of each post in terms of the number of words it contains
+post_unique_words <- unlist( lapply(post_words, function(x) {length(unique(x))})) # number of unique words per post.
+  # NB: length(post_unique_words) is always <= (less than/equal to) length(post_length)
+
+modelDF <- data.frame("Sentiment"=sentiment_scores_DF$compound,
+                      "Issue"=factor(envDF_tidy$Issue),
+                      "Followers"=envDF_tidy$Followers,
+                      "RTs"=envDF_tidy$RTs,
+                      "Likes"=envDF_tidy$Likes)
+
+
+hist.data.frame(modelDF, nclass=5)
+
+xyplot(Likes ~ Sentiment + Followers, data = modelDF, group = Issue, # format: y ~ x1 + x2 + ... xn. Do NOT include the grouping variable in y ~ x1 + ... + xn; note that group = Issue and Issue does not appear in Likes ~ x1 (Sentiment) + x2 (Followers)
+       auto.key = list(title = "Issue", columns = 2), scales="free"
+       )
+       
+       modelDF$logFollowers <- log(modelDF$Followers + 1) # note that log(0) --> -infinity. So we ensure that no observations are = 0 by including an offset of +1, which is a pretty trivial increment when you consider that some authors had more than 150,000 followers.
+modelDF$logLikes <- log(modelDF$Likes + 1)
+modelDF$logRTs <- log(modelDF$RTs + 1)
+
+hist.data.frame(modelDF[,c("Sentiment","logFollowers","logRTs","logLikes")],nclass=5)
+
+xyplot(logLikes ~ Sentiment + logFollowers, data = modelDF, group = Issue, # format: y ~ x1 + x2 + ... xn. Do NOT include the grouping variable in y ~ x1 + ... + xn; note that group = Issue and Issue does not appear in Likes ~ x1 (Sentiment) + x2 (Followers)
+       auto.key = list(title = "Issue", columns = 2), scales="free"
+       )
+       
+       textLM <- lm(logLikes~Issue+Sentiment+logFollowers, data=modelDF)
+clean_summary_DF <- summary(textLM)$coefficients # creating a data.frame to store the coefficient estimates from the summary() function 
+row.names(clean_summary_DF) <- c("Intercept","Issue=Public lands","Sentiment","Followers (log scale)") # creating nicer row names, where each row name denotes one of the variables in the model
+
+knitr::kable(clean_summary_DF,digits=2) # using the kable function because this ensures that your output tables can play nicely with Word outputs.
+@
+
+\end(document)

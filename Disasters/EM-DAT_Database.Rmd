@@ -1,0 +1,24 @@
+---
+title: "Disasters and EM-DAT Database"
+author: "Marc Los Huertos"
+date: "6/2/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+https://www.emdat.be/
+
+Dear Marc Los Huertos
+This email confirms that you successfully registered to EM-DAT database, which gives you the opportunity to use our different tools for data access and visualization.
+As a reminder, the reproduction and communication of the information obtained using EM-DAT is authorised by any means and in all forms, provided that the source is mentioned clearly as follows:
+EM-DAT: The Emergency Events Database - Université catholique de Louvain (UCL) - CRED, D. Guha-Sapir - www.emdat.be, Brussels, Belgium
+If you are interested in our activities, you are more than welcome to follow us on: http://twitter.com/creducl or like us on: http://facebook.com/creducl.
+To confirm your registration, please click the link below.
+Confirm registration
+Kind regards
+EM-DAT team

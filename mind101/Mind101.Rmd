@@ -1,0 +1,79 @@
+---
+title: "Mind101"
+author: "Marc Los Huertos"
+date: "12/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## ReadData
+
+```{r cars}
+#self = file.choose()
+self.csv = "/home/CAMPUS/mwl04747/github/test/mind101/Mindfulness Survey Results.csv"
+self = read.csv(self.csv)
+names(self)
+```
+
+## Histograms
+
+### Self Compassion
+
+```{r, echo=T}
+par(mfrow=c(2,1))
+hist(self$BEFORE)
+hist(self$AFTER)
+```
+
+## Statistics
+
+### Self Compassion
+
+```{r}
+t.test(self$BEFORE, self$AFTER)
+```
+
+
+## Difference with CRN?
+
+No difference with CRN...
+
+```{r}
+self.aov = aov(DIFFERENCE ~ CRN, self)
+summary(self.aov)
+boxplot(DIFFERENCE ~ CRN, self)
+```
+
+### Non-Parametric Test
+
+Can't remember how to do this right... meaningless!!
+
+Because the means are not normally distributed, just to check...
+
+```{r, eval=FALSE}
+self.diff = as.vector(na.omit(self$DIFFERENCE))
+mean(self.diff)
+self.before = as.vector(na.omit(self$BEFORE[self$BOTH=='YES']))
+self.after = as.vector(na.omit(self$AFTER[self$BOTH=='YES']))
+
+
+means=NA
+for(i in 1:10000){
+sampled = sample(self.before, replace=T)
+diff=self.after-sampled
+means[i]=mean(diff)
+#print(sampled1)
+}
+
+hist(means, breaks=15, xlim=c(7,21))
+LCL = mean(means)-sd(means)*1.96
+UCL = mean(means)+sd(means)*1.96
+
+abline(v=LCL, col='red')
+abline(v=UCL, col='red')
+abline(v=mean(self.diff), col='blue', lwd=2)
+
+```
